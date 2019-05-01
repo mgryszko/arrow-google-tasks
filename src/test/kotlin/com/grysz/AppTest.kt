@@ -1,11 +1,12 @@
 package com.grysz
 
+import arrow.core.Option
 import kotlin.test.Test
-import kotlin.test.assertNotNull
+import kotlin.test.assertEquals
 
 class AppTest {
     @Test
     fun testAppHasAGreeting() {
-        assertNotNull(App().greeting, "app should have a greeting")
+        assertEquals(Option.just("Hello world."), App().greeting)
     }
 }

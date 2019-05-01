@@ -1,7 +1,9 @@
 package com.grysz
 
+import arrow.core.Option
+
 class App {
-  val greeting = "Hello world."
+  val greeting = Option.just("Hello world.")
 }
 
 fun main() {
