@@ -1,6 +1,7 @@
 package com.grysz
 
 import arrow.core.*
+import arrow.core.extensions.either.monad.binding
 import com.google.api.client.auth.oauth2.Credential
 import com.google.api.client.extensions.java6.auth.oauth2.AuthorizationCodeInstalledApp
 import com.google.api.client.extensions.jetty.auth.oauth2.LocalServerReceiver
@@ -14,8 +15,10 @@ import com.google.api.client.util.store.FileDataStoreFactory
 import com.google.api.services.tasks.Tasks
 import com.google.api.services.tasks.TasksScopes
 import com.google.api.services.tasks.model.TaskLists
-import java.io.*
-import java.lang.RuntimeException
+import java.io.File
+import java.io.FileNotFoundException
+import java.io.InputStream
+import java.io.InputStreamReader
 
 object TasksQuickstart {
     private val applicationName = "Google Tasks API Java Quickstart"
@@ -26,15 +29,20 @@ object TasksQuickstart {
     private val credentialsFilePath = "/credentials.json"
 
     private fun getCredential(httpTransport: HttpTransport): Either<Throwable, Credential> {
-        return serializedCredential()
-            .flatMap(this::googleClientSecrets)
-            .flatMap { clientSecrets -> googleAuthorizationCodeFlow(httpTransport, clientSecrets) }
-            .flatMap { flow ->
-                Try {
-                    val receiver = LocalServerReceiver.Builder().setPort(8888).build()
-                    AuthorizationCodeInstalledApp(flow, receiver).authorize("user")
-                }.toEither()
-            }
+        return binding {
+            val (inputStream) = serializedCredential()
+            val (clientSecrets) = googleClientSecrets(inputStream)
+            val (flow) = googleAuthorizationCodeFlow(httpTransport, clientSecrets);
+            val (credential) = either(flow)
+            credential
+        }
+    }
+
+    private fun either(flow: GoogleAuthorizationCodeFlow): Either<Throwable, Credential> {
+        return Try {
+            val receiver = LocalServerReceiver.Builder().setPort(8888).build()
+            AuthorizationCodeInstalledApp(flow, receiver).authorize("user")
+        }.toEither()
     }
 
     private fun serializedCredential(): Either<Throwable, InputStream> =
@@ -48,12 +56,14 @@ object TasksQuickstart {
         Try { GoogleNetHttpTransport.newTrustedTransport() }.toEither()
 
     private fun googleAuthorizationCodeFlow(httpTransport: HttpTransport, clientSecrets: GoogleClientSecrets): Either<Throwable, GoogleAuthorizationCodeFlow> =
-         fileDataStoreFactory().flatMap { fileDataStoreFactory ->
-             Try(GoogleAuthorizationCodeFlow.Builder(httpTransport, jsonFactory, clientSecrets, scopes)
+        binding {
+            val (fileDataStoreFactory) = fileDataStoreFactory()
+            val (flow) = Try(GoogleAuthorizationCodeFlow.Builder(httpTransport, jsonFactory, clientSecrets, scopes)
                  .setDataStoreFactory(fileDataStoreFactory)
                  .setAccessType("offline")::build
-             ).toEither()
-         }
+            ).toEither()
+            flow
+        }
 
     private fun fileDataStoreFactory(): Either<Throwable, FileDataStoreFactory> =
         Try { FileDataStoreFactory(File(tokensDirectoryPath)) }.toEither()
@@ -69,18 +79,15 @@ object TasksQuickstart {
 
     @JvmStatic
     fun main(args: Array<String>) {
-        val tasksList = httpTransport()
-            .flatMap { httpTransport -> getCredential(httpTransport)
-                .map { credential -> tasksService(httpTransport, credential) }
-            }
-            .flatMap { service ->  taskLists(service).map { it.items } }
-            .flatMap { t ->
-                if (t.isEmpty()) RuntimeException("No task lists found.").left() else t.right()
-            }.map { tasksList ->
-                tasksList.joinToString("\n") { "${it.title} (${it.id})" }
-            }.fold({ t -> "Error: $t" }, { tasksList -> "Task lists:\n$tasksList" } )
+        val tasksList: Either<Throwable, String> = binding {
+            val (httpTransport) = httpTransport()
+            val (credential) = getCredential(httpTransport)
+            val (tasks) =  tasksService(httpTransport, credential).right()
+            val (taskLists) = taskLists(tasks)
+            val (items) = if (taskLists.items.isNotEmpty()) taskLists.items.right() else RuntimeException("No task lists found.").left()
+            items.joinToString("\n") { "${it.title} (${it.id})" }
+        }
 
-        println(tasksList)
+        println(tasksList.fold({ t -> "Error: $t" }, { "Task lists:\n$it" } ))
     }
-
 }
