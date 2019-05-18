@@ -50,15 +50,19 @@ object TasksQuickstart {
     private fun googleAuthorizationCodeFlow(httpTransport: HttpTransport, clientSecrets: GoogleClientSecrets): Either<Throwable, GoogleAuthorizationCodeFlow> =
         binding {
             val (fileDataStoreFactory) = fileDataStoreFactory()
-            val (flow) = Try(GoogleAuthorizationCodeFlow.Builder(httpTransport, jsonFactory, clientSecrets, scopes)
-                 .setDataStoreFactory(fileDataStoreFactory)
-                 .setAccessType("offline")::build
-            ).toEither()
+            val (flow) = flow(httpTransport, clientSecrets, fileDataStoreFactory)
             flow
         }
 
     private fun fileDataStoreFactory(): Either<Throwable, FileDataStoreFactory> =
         Try { FileDataStoreFactory(File(tokensDirectoryPath)) }.toEither()
+
+    private fun flow(httpTransport: HttpTransport, clientSecrets: GoogleClientSecrets, fileDataStoreFactory: FileDataStoreFactory): Either<Throwable, GoogleAuthorizationCodeFlow> {
+        return Try(GoogleAuthorizationCodeFlow.Builder(httpTransport, jsonFactory, clientSecrets, scopes)
+            .setDataStoreFactory(fileDataStoreFactory)
+            .setAccessType("offline")::build
+        ).toEither()
+    }
 
     private fun authorize(flow: GoogleAuthorizationCodeFlow): Either<Throwable, Credential> {
         return Try {
