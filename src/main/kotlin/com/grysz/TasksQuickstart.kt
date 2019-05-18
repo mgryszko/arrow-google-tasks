@@ -27,6 +27,9 @@ object TasksQuickstart {
     private val scopes = listOf(TasksScopes.TASKS_READONLY)
     private val credentialsFilePath = "/credentials.json"
 
+    private fun httpTransport(): Either<Throwable, HttpTransport> =
+        Try { GoogleNetHttpTransport.newTrustedTransport() }.toEither()
+
     private fun getCredential(httpTransport: HttpTransport): Either<Throwable, Credential> {
         return binding {
             val (inputStream) = serializedCredential()
@@ -37,22 +40,12 @@ object TasksQuickstart {
         }
     }
 
-    private fun authorize(flow: GoogleAuthorizationCodeFlow): Either<Throwable, Credential> {
-        return Try {
-            val receiver = LocalServerReceiver.Builder().setPort(8888).build()
-            AuthorizationCodeInstalledApp(flow, receiver).authorize("user")
-        }.toEither()
-    }
-
     private fun serializedCredential(): Either<Throwable, InputStream> =
         TasksQuickstart::class.java.getResourceAsStream(credentialsFilePath).right()
             .leftIfNull { FileNotFoundException("Resource not found: $credentialsFilePath") }
 
     private fun googleClientSecrets(inputStream: InputStream): Either<Throwable, GoogleClientSecrets> =
         Try { GoogleClientSecrets.load(jsonFactory, InputStreamReader(inputStream)) }.toEither()
-
-    private fun httpTransport(): Either<Throwable, HttpTransport> =
-        Try { GoogleNetHttpTransport.newTrustedTransport() }.toEither()
 
     private fun googleAuthorizationCodeFlow(httpTransport: HttpTransport, clientSecrets: GoogleClientSecrets): Either<Throwable, GoogleAuthorizationCodeFlow> =
         binding {
@@ -66,6 +59,13 @@ object TasksQuickstart {
 
     private fun fileDataStoreFactory(): Either<Throwable, FileDataStoreFactory> =
         Try { FileDataStoreFactory(File(tokensDirectoryPath)) }.toEither()
+
+    private fun authorize(flow: GoogleAuthorizationCodeFlow): Either<Throwable, Credential> {
+        return Try {
+            val receiver = LocalServerReceiver.Builder().setPort(8888).build()
+            AuthorizationCodeInstalledApp(flow, receiver).authorize("user")
+        }.toEither()
+    }
 
     private fun tasksService(httpTransport: HttpTransport, credential: Credential): Tasks {
         return Tasks.Builder(httpTransport, jsonFactory, credential)
