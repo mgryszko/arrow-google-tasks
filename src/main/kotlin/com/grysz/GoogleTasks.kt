@@ -35,9 +35,10 @@ class SafeGoogleTasks: GoogleTasks<EitherPartialOf<Throwable>> {
 
 class GoogleTasksProgram<F>(val GT: GoogleTasks<F>) {
     fun Monad<F>.persistedSecrets(): Kind<F, GoogleClientSecrets> {
-        // TODO Sequence operations with `binding`
-        return GT.serializedCredential().flatMap { inputStream ->
-            GT.googleClientSecrets(inputStream)
+        return binding {
+            val (inputStream) = GT.serializedCredential()
+            val (clientSecrets) = GT.googleClientSecrets(inputStream)
+            clientSecrets
         }
     }
 }
