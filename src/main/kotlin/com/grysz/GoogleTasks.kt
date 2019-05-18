@@ -33,8 +33,8 @@ class SafeGoogleTasks: GoogleTasks<EitherPartialOf<Throwable>> {
         Try { GoogleClientSecrets.load(jsonFactory, InputStreamReader(inputStream)) }.toEither()
 }
 
-class GoogleTasksProgram<F>(val GT: GoogleTasks<F>) {
-    fun Monad<F>.persistedSecrets(): Kind<F, GoogleClientSecrets> {
+class GoogleTasksProgram<F>(val GT: GoogleTasks<F>, M: Monad<F>): Monad<F> by M {
+    fun persistedSecrets(): Kind<F, GoogleClientSecrets> {
         return binding {
             val (inputStream) = GT.serializedCredential()
             val (clientSecrets) = GT.googleClientSecrets(inputStream)
@@ -44,10 +44,7 @@ class GoogleTasksProgram<F>(val GT: GoogleTasks<F>) {
 }
 
 fun main() {
-    Either.monad<Throwable>().run {
-        GoogleTasksProgram(SafeGoogleTasks()).run {
-            println(persistedSecrets())
-        }
-    }
+    val p = GoogleTasksProgram(SafeGoogleTasks(), Either.monad())
+    println(p.persistedSecrets())
 }
 
