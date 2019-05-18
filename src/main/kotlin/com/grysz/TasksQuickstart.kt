@@ -9,7 +9,6 @@ import com.google.api.client.googleapis.auth.oauth2.GoogleAuthorizationCodeFlow
 import com.google.api.client.googleapis.auth.oauth2.GoogleClientSecrets
 import com.google.api.client.googleapis.javanet.GoogleNetHttpTransport
 import com.google.api.client.http.HttpTransport
-import com.google.api.client.http.javanet.NetHttpTransport
 import com.google.api.client.json.jackson2.JacksonFactory
 import com.google.api.client.util.store.FileDataStoreFactory
 import com.google.api.services.tasks.Tasks
@@ -33,12 +32,12 @@ object TasksQuickstart {
             val (inputStream) = serializedCredential()
             val (clientSecrets) = googleClientSecrets(inputStream)
             val (flow) = googleAuthorizationCodeFlow(httpTransport, clientSecrets);
-            val (credential) = either(flow)
+            val (credential) = authorize(flow)
             credential
         }
     }
 
-    private fun either(flow: GoogleAuthorizationCodeFlow): Either<Throwable, Credential> {
+    private fun authorize(flow: GoogleAuthorizationCodeFlow): Either<Throwable, Credential> {
         return Try {
             val receiver = LocalServerReceiver.Builder().setPort(8888).build()
             AuthorizationCodeInstalledApp(flow, receiver).authorize("user")
@@ -52,7 +51,7 @@ object TasksQuickstart {
     private fun googleClientSecrets(inputStream: InputStream): Either<Throwable, GoogleClientSecrets> =
         Try { GoogleClientSecrets.load(jsonFactory, InputStreamReader(inputStream)) }.toEither()
 
-    private fun httpTransport(): Either<Throwable, NetHttpTransport> =
+    private fun httpTransport(): Either<Throwable, HttpTransport> =
         Try { GoogleNetHttpTransport.newTrustedTransport() }.toEither()
 
     private fun googleAuthorizationCodeFlow(httpTransport: HttpTransport, clientSecrets: GoogleClientSecrets): Either<Throwable, GoogleAuthorizationCodeFlow> =
@@ -68,7 +67,7 @@ object TasksQuickstart {
     private fun fileDataStoreFactory(): Either<Throwable, FileDataStoreFactory> =
         Try { FileDataStoreFactory(File(tokensDirectoryPath)) }.toEither()
 
-    private fun tasksService(httpTransport: NetHttpTransport, credential: Credential): Tasks {
+    private fun tasksService(httpTransport: HttpTransport, credential: Credential): Tasks {
         return Tasks.Builder(httpTransport, jsonFactory, credential)
             .setApplicationName(applicationName)
             .build()
