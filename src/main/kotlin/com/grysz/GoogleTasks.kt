@@ -30,11 +30,10 @@ import java.io.InputStreamReader
 val credentialsFilePath = "/credentials.json"
 val jsonFactory = JacksonFactory.getDefaultInstance()
 
-class ReaderGoogleAuthentication {
-    fun fileDataStoreFactory(): Kleisli<EitherPartialOf<Throwable>, String, FileDataStoreFactory> {
-        val AF = Either.monad<Throwable>()
-        return Kleisli.ask<EitherPartialOf<Throwable>, String>(AF).andThen(AF) { tokensDirectoryPath ->
-            Try { FileDataStoreFactory(File(tokensDirectoryPath)) }.toEither()
+class ReaderGoogleAuthentication<F>(ME: MonadError<F, Throwable>): MonadError<F, Throwable> by ME {
+    fun fileDataStoreFactory(): Kleisli<F, String, FileDataStoreFactory> {
+        return Kleisli.ask<F, String>(this).andThen(this) { tokensDirectoryPath ->
+            catch { FileDataStoreFactory(File(tokensDirectoryPath)) }
         }
     }
 }
