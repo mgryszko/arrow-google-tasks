@@ -3,6 +3,8 @@ package com.grysz
 import arrow.Kind
 import arrow.core.Either
 import arrow.core.extensions.either.monadError.monadError
+import arrow.data.Reader
+import arrow.data.map
 import arrow.typeclasses.Monad
 import arrow.typeclasses.MonadError
 import com.google.api.client.auth.oauth2.Credential
@@ -25,6 +27,14 @@ import java.io.InputStreamReader
 
 val credentialsFilePath = "/credentials.json"
 val jsonFactory = JacksonFactory.getDefaultInstance()
+
+class ReaderGoogleAuthentication {
+    fun fileDataStoreFactory(): Reader<String, FileDataStoreFactory> {
+        return Reader().ask<String>().map { tokensDirectoryPath ->
+            FileDataStoreFactory(File(tokensDirectoryPath))
+        }
+    }
+}
 
 class GoogleAuthentication<F>(ME: MonadError<F, Throwable>): MonadError<F, Throwable> by ME {
     private val tokensDirectoryPath = "tokens"
