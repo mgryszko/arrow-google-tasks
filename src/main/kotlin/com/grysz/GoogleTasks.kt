@@ -2,9 +2,11 @@ package com.grysz
 
 import arrow.Kind
 import arrow.core.Either
+import arrow.core.EitherPartialOf
+import arrow.core.Try
+import arrow.core.extensions.either.monad.monad
 import arrow.core.extensions.either.monadError.monadError
-import arrow.data.Reader
-import arrow.data.map
+import arrow.data.Kleisli
 import arrow.typeclasses.Monad
 import arrow.typeclasses.MonadError
 import com.google.api.client.auth.oauth2.Credential
@@ -29,9 +31,10 @@ val credentialsFilePath = "/credentials.json"
 val jsonFactory = JacksonFactory.getDefaultInstance()
 
 class ReaderGoogleAuthentication {
-    fun fileDataStoreFactory(): Reader<String, FileDataStoreFactory> {
-        return Reader().ask<String>().map { tokensDirectoryPath ->
-            FileDataStoreFactory(File(tokensDirectoryPath))
+    fun fileDataStoreFactory(): Kleisli<EitherPartialOf<Throwable>, String, FileDataStoreFactory> {
+        val AF = Either.monad<Throwable>()
+        return Kleisli.ask<EitherPartialOf<Throwable>, String>(AF).andThen(AF) { tokensDirectoryPath ->
+            Try { FileDataStoreFactory(File(tokensDirectoryPath)) }.toEither()
         }
     }
 }
