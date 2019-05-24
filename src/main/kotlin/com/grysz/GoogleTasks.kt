@@ -1,8 +1,7 @@
 package com.grysz
 
 import arrow.Kind
-import arrow.core.*
-import arrow.core.extensions.either.monad.map
+import arrow.core.Either
 import arrow.core.extensions.either.monadError.monadError
 import arrow.typeclasses.Monad
 import arrow.typeclasses.MonadError
@@ -121,10 +120,12 @@ fun main() {
         tasksService = GoogleTasksService(M),
         ME = M
     )
-    val taskLists = useCase.execute().map(::format)
-
-    println(taskLists.fold({ t -> "Error: $t" }, { "Task lists:\n$it" } ))
+    with (M) {
+        val taskLists = useCase.execute().map(::format)
+        println(taskLists.fold({ t -> "Error: $t" }, { "Task lists:\n$it" } ))
+    }
 }
+
 
 fun format(taskLists: List<TaskList>): String = taskLists.joinToString("\n") { "${it.title} (${it.id})" }
 
