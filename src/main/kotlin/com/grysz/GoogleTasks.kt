@@ -27,45 +27,38 @@ import java.io.InputStreamReader
 val credentialsFilePath = "/credentials.json"
 val jsonFactory = JacksonFactory.getDefaultInstance()
 
-interface GoogleAuthentication<out F> {
-    fun httpTransport(): Kind<F, HttpTransport>
-    fun serializedCredential(): Kind<F, InputStream>
-    fun googleClientSecrets(inputStream: InputStream): Kind<F, GoogleClientSecrets>
-    fun fileDataStoreFactory(): Kind<F, FileDataStoreFactory>
-    fun flow(httpTransport: HttpTransport, clientSecrets: GoogleClientSecrets, fileDataStoreFactory: FileDataStoreFactory): Kind<F, GoogleAuthorizationCodeFlow>
-    fun authorize(flow: GoogleAuthorizationCodeFlow): Kind<F, Credential>
-}
-
-class SafeGoogleAuthentication: GoogleAuthentication<EitherPartialOf<Throwable>> {
+class GoogleAuthentication<F>(ME: MonadError<F, Throwable>): MonadError<F, Throwable> by ME {
     private val tokensDirectoryPath = "tokens"
     private val scopes = listOf(TasksScopes.TASKS_READONLY)
 
-    override fun httpTransport(): Either<Throwable, HttpTransport> =
-        Try { GoogleNetHttpTransport.newTrustedTransport() }.toEither()
+    fun httpTransport(): Kind<F, HttpTransport> = catch(GoogleNetHttpTransport::newTrustedTransport)
 
-    override fun serializedCredential(): Either<Throwable, InputStream> =
-        SafeGoogleAuthentication::class.java.getResourceAsStream(credentialsFilePath).right()
-            .leftIfNull { FileNotFoundException("Resource not found: $credentialsFilePath") }
+    fun serializedCredential(): Kind<F, InputStream> =
+        just(GoogleAuthentication::class.java.getResourceAsStream(credentialsFilePath))
+            .flatMap { inputStream -> if (inputStream != null) {
+                just(inputStream)
+            } else {
+                raiseError(FileNotFoundException("Resource not found: $credentialsFilePath"))
+            }
+        }
 
-    override fun googleClientSecrets(inputStream: InputStream): Either<Throwable, GoogleClientSecrets> =
-        Try { GoogleClientSecrets.load(jsonFactory, InputStreamReader(inputStream)) }.toEither()
+    fun googleClientSecrets(inputStream: InputStream): Kind<F, GoogleClientSecrets> =
+        catch { GoogleClientSecrets.load(jsonFactory, InputStreamReader(inputStream))}
 
-    override fun fileDataStoreFactory(): Either<Throwable, FileDataStoreFactory> =
-        Try { FileDataStoreFactory(File(tokensDirectoryPath)) }.toEither()
+    fun fileDataStoreFactory(): Kind<F, FileDataStoreFactory> =
+        catch { FileDataStoreFactory(File(tokensDirectoryPath)) }
 
-    override fun flow(httpTransport: HttpTransport, clientSecrets: GoogleClientSecrets, fileDataStoreFactory: FileDataStoreFactory): Either<Throwable, GoogleAuthorizationCodeFlow> {
-        return Try(GoogleAuthorizationCodeFlow.Builder(httpTransport, jsonFactory, clientSecrets, scopes)
+    fun flow(httpTransport: HttpTransport, clientSecrets: GoogleClientSecrets, fileDataStoreFactory: FileDataStoreFactory): Kind<F, GoogleAuthorizationCodeFlow> =
+        catch(GoogleAuthorizationCodeFlow.Builder(httpTransport, jsonFactory, clientSecrets, scopes)
             .setDataStoreFactory(fileDataStoreFactory)
             .setAccessType("offline")::build
-        ).toEither()
-    }
+        )
 
-    override fun authorize(flow: GoogleAuthorizationCodeFlow): Either<Throwable, Credential> {
-        return Try {
+    fun authorize(flow: GoogleAuthorizationCodeFlow): Kind<F, Credential> =
+        catch {
             val receiver = LocalServerReceiver.Builder().setPort(8888).build()
             AuthorizationCodeInstalledApp(flow, receiver).authorize("user")
-        }.toEither()
-    }
+        }
 }
 
 class GoogleCredential<F>(val authentication: GoogleAuthentication<F>, M: Monad<F>): Monad<F> by M {
@@ -123,8 +116,8 @@ class TaskLists<F>(
 fun main() {
     val M = Either.monadError<Throwable>()
     val useCase = TaskLists(
-        authentication = SafeGoogleAuthentication(),
-        credential = GoogleCredential(SafeGoogleAuthentication(), M),
+        authentication = GoogleAuthentication(M),
+        credential = GoogleCredential(GoogleAuthentication(M), M),
         tasksService = GoogleTasksService(M),
         ME = M
     )
