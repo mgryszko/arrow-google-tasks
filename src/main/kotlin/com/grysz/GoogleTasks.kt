@@ -113,7 +113,7 @@ class TaskLists<F>(
 
 
 fun main() {
-    val M = Either.monadError<Throwable>()
+    val M = Either.monadError<Throwable>() // or Try.monadError()
     val useCase = TaskLists(
         authentication = GoogleAuthentication(M),
         credential = GoogleCredential(GoogleAuthentication(M), M),
