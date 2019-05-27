@@ -3,10 +3,10 @@ package com.grysz
 import arrow.Kind
 import arrow.core.Either
 import arrow.core.EitherPartialOf
-import arrow.core.Try
-import arrow.core.extensions.either.monad.monad
 import arrow.core.extensions.either.monadError.monadError
-import arrow.data.Kleisli
+import arrow.core.fix
+import arrow.mtl.extensions.KleisliMtlContext
+import arrow.mtl.typeclasses.MonadReader
 import arrow.typeclasses.Monad
 import arrow.typeclasses.MonadError
 import com.google.api.client.auth.oauth2.Credential
@@ -30,16 +30,7 @@ import java.io.InputStreamReader
 val credentialsFilePath = "/credentials.json"
 val jsonFactory = JacksonFactory.getDefaultInstance()
 
-class ReaderGoogleAuthentication<F>(ME: MonadError<F, Throwable>): MonadError<F, Throwable> by ME {
-    fun fileDataStoreFactory(): Kleisli<F, String, FileDataStoreFactory> {
-        return Kleisli.ask<F, String>(this).andThen(this) { tokensDirectoryPath ->
-            catch { FileDataStoreFactory(File(tokensDirectoryPath)) }
-        }
-    }
-}
-
-class GoogleAuthentication<F>(ME: MonadError<F, Throwable>): MonadError<F, Throwable> by ME {
-    private val tokensDirectoryPath = "tokens"
+class GoogleAuthentication<F>(ME: MonadError<F, Throwable>, val MR: MonadReader<F, String>): MonadError<F, Throwable> by ME {
     private val scopes = listOf(TasksScopes.TASKS_READONLY)
 
     fun httpTransport(): Kind<F, HttpTransport> = catch(GoogleNetHttpTransport::newTrustedTransport)
@@ -56,8 +47,11 @@ class GoogleAuthentication<F>(ME: MonadError<F, Throwable>): MonadError<F, Throw
     fun googleClientSecrets(inputStream: InputStream): Kind<F, GoogleClientSecrets> =
         catch { GoogleClientSecrets.load(jsonFactory, InputStreamReader(inputStream))}
 
-    fun fileDataStoreFactory(): Kind<F, FileDataStoreFactory> =
-        catch { FileDataStoreFactory(File(tokensDirectoryPath)) }
+    fun fileDataStoreFactory(): Kind<F, FileDataStoreFactory> = with(MR) {
+        ask().flatMap { tokensDirectoryPath ->
+            catch { FileDataStoreFactory(File(tokensDirectoryPath)) }
+        }
+    }
 
     fun flow(httpTransport: HttpTransport, clientSecrets: GoogleClientSecrets, fileDataStoreFactory: FileDataStoreFactory): Kind<F, GoogleAuthorizationCodeFlow> =
         catch(GoogleAuthorizationCodeFlow.Builder(httpTransport, jsonFactory, clientSecrets, scopes)
@@ -125,15 +119,16 @@ class TaskLists<F>(
 
 
 fun main() {
-    val M = Either.monadError<Throwable>() // or Try.monadError()
+    val ME = Either.monadError<Throwable>() // or Try.monadError()
+    val MR = KleisliMtlContext<EitherPartialOf<Throwable>, String, Throwable>(ME)
     val useCase = TaskLists(
-        authentication = GoogleAuthentication(M),
-        credential = GoogleCredential(GoogleAuthentication(M), M),
-        tasksService = GoogleTasksService(M),
-        ME = M
+        authentication = GoogleAuthentication(MR, MR),
+        credential = GoogleCredential(GoogleAuthentication(MR, MR), MR),
+        tasksService = GoogleTasksService(MR),
+        ME = MR
     )
-    with (M) {
-        val taskLists = useCase.execute().map(::format)
+    with (MR) {
+        val taskLists = useCase.execute().map(::format).run("tokens").fix()
         println(taskLists.fold({ t -> "Error: $t" }, { "Task lists:\n$it" } ))
     }
 }
