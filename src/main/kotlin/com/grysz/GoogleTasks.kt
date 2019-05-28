@@ -27,28 +27,33 @@ import java.io.FileNotFoundException
 import java.io.InputStream
 import java.io.InputStreamReader
 
-val credentialsFilePath = "/credentials.json"
 val jsonFactory = JacksonFactory.getDefaultInstance()
 
-class GoogleAuthentication<F>(ME: MonadError<F, Throwable>, val MR: MonadReader<F, String>): MonadError<F, Throwable> by ME {
+data class Config(val credentialsFilePath: String, val tokensDirectoryPath: String, val applicationName: String)
+
+class GoogleAuthentication<F>(ME: MonadError<F, Throwable>, val MR: MonadReader<F, Config>): MonadError<F, Throwable> by ME {
     private val scopes = listOf(TasksScopes.TASKS_READONLY)
 
     fun httpTransport(): Kind<F, HttpTransport> = catch(GoogleNetHttpTransport::newTrustedTransport)
 
-    fun serializedCredential(): Kind<F, InputStream> =
-        just(GoogleAuthentication::class.java.getResourceAsStream(credentialsFilePath))
-            .flatMap { inputStream -> if (inputStream != null) {
-                just(inputStream)
-            } else {
-                raiseError(FileNotFoundException("Resource not found: $credentialsFilePath"))
-            }
+    fun serializedCredential(): Kind<F, InputStream> = with(MR) {
+        ask().flatMap { (credentialsFilePath) ->
+            just(GoogleAuthentication::class.java.getResourceAsStream(credentialsFilePath))
+                .flatMap { inputStream ->
+                    if (inputStream != null) {
+                        just(inputStream)
+                    } else {
+                        raiseError(FileNotFoundException("Resource not found: $credentialsFilePath"))
+                    }
+                }
         }
+    }
 
     fun googleClientSecrets(inputStream: InputStream): Kind<F, GoogleClientSecrets> =
         catch { GoogleClientSecrets.load(jsonFactory, InputStreamReader(inputStream))}
 
     fun fileDataStoreFactory(): Kind<F, FileDataStoreFactory> = with(MR) {
-        ask().flatMap { tokensDirectoryPath ->
+        ask().flatMap { (_, tokensDirectoryPath) ->
             catch { FileDataStoreFactory(File(tokensDirectoryPath)) }
         }
     }
@@ -86,14 +91,13 @@ class GoogleCredential<F>(val authentication: GoogleAuthentication<F>, M: Monad<
     }
 }
 
-class GoogleTasksService<F>(M: Monad<F>): Monad<F> by M {
-    private val applicationName = "Google Tasks API Java Quickstart"
-
-    fun create(httpTransport: HttpTransport, credential: Credential): Kind<F, Tasks> {
-        return just(Tasks.Builder(httpTransport, jsonFactory, credential)
-            .setApplicationName(applicationName)
-            .build())
-    }
+class GoogleTasksService<F>(MR: MonadReader<F, Config>): MonadReader<F, Config> by MR {
+    fun create(httpTransport: HttpTransport, credential: Credential): Kind<F, Tasks> =
+        ask().map { (_, _, applicationName) ->
+            Tasks.Builder(httpTransport, jsonFactory, credential)
+                .setApplicationName(applicationName)
+                .build()
+        }
 }
 
 class TaskLists<F>(
@@ -117,19 +121,23 @@ class TaskLists<F>(
         catch(tasks.tasklists().list().setMaxResults(10L)::execute)
 }
 
-
 fun main() {
     val ME = Either.monadError<Throwable>() // or Try.monadError()
-    val MR = KleisliMtlContext<EitherPartialOf<Throwable>, String, Throwable>(ME)
+    val MR = KleisliMtlContext<EitherPartialOf<Throwable>, Config, Throwable>(ME)
     val useCase = TaskLists(
         authentication = GoogleAuthentication(MR, MR),
         credential = GoogleCredential(GoogleAuthentication(MR, MR), MR),
         tasksService = GoogleTasksService(MR),
         ME = MR
     )
+    val config = Config(
+        credentialsFilePath = "/credentials.json",
+        tokensDirectoryPath = "tokens",
+        applicationName = "Google Tasks API Java Quickstart"
+    )
     with (MR) {
-        val taskLists = useCase.execute().map(::format).run("tokens").fix()
-        println(taskLists.fold({ t -> "Error: $t" }, { "Task lists:\n$it" } ))
+        val taskLists = useCase.execute().map(::format).run(config).fix()
+        println(taskLists.fold({ t -> t.printStackTrace(); "Error: $t" }, { "Task lists:\n$it" } ))
     }
 }
 
