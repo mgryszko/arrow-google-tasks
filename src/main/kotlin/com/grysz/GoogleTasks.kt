@@ -2,11 +2,8 @@ package com.grysz
 
 import arrow.Kind
 import arrow.core.Either
-import arrow.core.EitherPartialOf
 import arrow.core.extensions.either.monadError.monadError
-import arrow.core.fix
-import arrow.mtl.extensions.KleisliMtlContext
-import arrow.mtl.typeclasses.MonadReader
+import arrow.data.Kleisli
 import arrow.typeclasses.Monad
 import arrow.typeclasses.MonadError
 import com.google.api.client.auth.oauth2.Credential
@@ -29,34 +26,29 @@ import java.io.InputStreamReader
 
 val jsonFactory = JacksonFactory.getDefaultInstance()
 
-data class Config(val credentialsFilePath: String, val tokensDirectoryPath: String, val applicationName: String)
+data class AuthConfig(val credentialsFilePath: String, val tokensDirectoryPath: String)
+data class Config(val authConfig: AuthConfig, val applicationName: String)
 
-class GoogleAuthentication<F>(ME: MonadError<F, Throwable>, val MR: MonadReader<F, Config>): MonadError<F, Throwable> by ME {
+class GoogleAuthentication<F>(ME: MonadError<F, Throwable>, val authConfig: AuthConfig): MonadError<F, Throwable> by ME {
     private val scopes = listOf(TasksScopes.TASKS_READONLY)
 
     fun httpTransport(): Kind<F, HttpTransport> = catch(GoogleNetHttpTransport::newTrustedTransport)
 
-    fun serializedCredential(): Kind<F, InputStream> = with(MR) {
-        ask().flatMap { (credentialsFilePath) ->
-            just(GoogleAuthentication::class.java.getResourceAsStream(credentialsFilePath))
-                .flatMap { inputStream ->
-                    if (inputStream != null) {
-                        just(inputStream)
-                    } else {
-                        raiseError(FileNotFoundException("Resource not found: $credentialsFilePath"))
-                    }
+    fun serializedCredential(): Kind<F, InputStream> =
+        just(GoogleAuthentication::class.java.getResourceAsStream(authConfig.credentialsFilePath))
+            .flatMap { inputStream ->
+                if (inputStream != null) {
+                    just(inputStream)
+                } else {
+                    raiseError(FileNotFoundException("Resource not found: ${authConfig.credentialsFilePath}"))
                 }
-        }
-    }
+            }
 
     fun googleClientSecrets(inputStream: InputStream): Kind<F, GoogleClientSecrets> =
         catch { GoogleClientSecrets.load(jsonFactory, InputStreamReader(inputStream))}
 
-    fun fileDataStoreFactory(): Kind<F, FileDataStoreFactory> = with(MR) {
-        ask().flatMap { (_, tokensDirectoryPath) ->
-            catch { FileDataStoreFactory(File(tokensDirectoryPath)) }
-        }
-    }
+    fun fileDataStoreFactory(): Kind<F, FileDataStoreFactory> =
+        catch { FileDataStoreFactory(File(authConfig.tokensDirectoryPath)) }
 
     fun flow(httpTransport: HttpTransport, clientSecrets: GoogleClientSecrets, fileDataStoreFactory: FileDataStoreFactory): Kind<F, GoogleAuthorizationCodeFlow> =
         catch(GoogleAuthorizationCodeFlow.Builder(httpTransport, jsonFactory, clientSecrets, scopes)
@@ -70,6 +62,7 @@ class GoogleAuthentication<F>(ME: MonadError<F, Throwable>, val MR: MonadReader<
             AuthorizationCodeInstalledApp(flow, receiver).authorize("user")
         }
 }
+
 
 class GoogleCredential<F>(val authentication: GoogleAuthentication<F>, M: Monad<F>): Monad<F> by M {
     fun get(httpTransport: HttpTransport): Kind<F, Credential> {
@@ -91,13 +84,11 @@ class GoogleCredential<F>(val authentication: GoogleAuthentication<F>, M: Monad<
     }
 }
 
-class GoogleTasksService<F>(MR: MonadReader<F, Config>): MonadReader<F, Config> by MR {
+class GoogleTasksService<F>(MR: Monad<F>, val applicationName: String): Monad<F> by MR {
     fun create(httpTransport: HttpTransport, credential: Credential): Kind<F, Tasks> =
-        ask().map { (_, _, applicationName) ->
-            Tasks.Builder(httpTransport, jsonFactory, credential)
-                .setApplicationName(applicationName)
-                .build()
-        }
+        just(Tasks.Builder(httpTransport, jsonFactory, credential)
+            .setApplicationName(applicationName)
+            .build())
 }
 
 class TaskLists<F>(
@@ -121,23 +112,42 @@ class TaskLists<F>(
         catch(tasks.tasklists().list().setMaxResults(10L)::execute)
 }
 
+fun <F> authentication(ME: MonadError<F, Throwable>): Kleisli<F, Config, GoogleAuthentication<F>> {
+    return Kleisli.ask<F, AuthConfig>(ME)
+        .local(Config::authConfig).map(ME) { authConfig -> GoogleAuthentication(ME, authConfig) }
+}
+
+fun <F> tasksService(M: Monad<F>): Kleisli<F, Config, GoogleTasksService<F>> {
+    return Kleisli.ask<F, String>(M)
+        .local(Config::applicationName).map(M) { appName -> GoogleTasksService(M, appName) }
+}
+
 fun main() {
     val ME = Either.monadError<Throwable>() // or Try.monadError()
-    val MR = KleisliMtlContext<EitherPartialOf<Throwable>, Config, Throwable>(ME)
-    val useCase = TaskLists(
-        authentication = GoogleAuthentication(MR, MR),
-        credential = GoogleCredential(GoogleAuthentication(MR, MR), MR),
-        tasksService = GoogleTasksService(MR),
-        ME = MR
-    )
+
     val config = Config(
-        credentialsFilePath = "/credentials.json",
-        tokensDirectoryPath = "tokens",
+        AuthConfig(
+            credentialsFilePath = "/credentials.json",
+            tokensDirectoryPath = "tokens"
+        ),
         applicationName = "Google Tasks API Java Quickstart"
     )
-    with (MR) {
-        val taskLists = useCase.execute().map(::format).run(config).fix()
-        println(taskLists.fold({ t -> t.printStackTrace(); "Error: $t" }, { "Task lists:\n$it" } ))
+
+    val authentication = authentication(ME).run(config)
+    val tasksService = tasksService(ME).run(config)
+    with (ME) {
+        authentication.product(tasksService).map { (authentication, tasksService) ->
+            TaskLists(
+                authentication = authentication,
+                credential = GoogleCredential(authentication, ME),
+                tasksService = tasksService,
+                ME = ME
+            )
+        }.map { useCase ->
+            useCase.execute().map(::format)
+        }.map { taskLists ->
+            println(taskLists.fold({ t -> t.printStackTrace(); "Error: $t" }, { "Task lists:\n$it" } ))
+        }
     }
 }
 
