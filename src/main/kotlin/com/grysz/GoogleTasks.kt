@@ -3,6 +3,7 @@ package com.grysz
 import arrow.Kind
 import arrow.core.Either
 import arrow.core.extensions.either.monadError.monadError
+import arrow.core.fix
 import arrow.data.Kleisli
 import arrow.typeclasses.Monad
 import arrow.typeclasses.MonadError
@@ -135,19 +136,17 @@ fun main() {
 
     val authentication = authentication(ME).run(config)
     val tasksService = tasksService(ME).run(config)
-    with (ME) {
-        authentication.product(tasksService).map { (authentication, tasksService) ->
-            TaskLists(
-                authentication = authentication,
-                credential = GoogleCredential(authentication, ME),
-                tasksService = tasksService,
-                ME = ME
-            )
-        }.map { useCase ->
-            useCase.execute().map(::format)
-        }.map { taskLists ->
-            println(taskLists.fold({ t -> t.printStackTrace(); "Error: $t" }, { "Task lists:\n$it" } ))
-        }
+    ME.binding {
+        val (dependencies) = authentication.product(tasksService)
+        val (authentication, tasksService) = dependencies
+        val useCase = TaskLists(
+            authentication = authentication,
+            credential = GoogleCredential(authentication, ME),
+            tasksService = tasksService,
+            ME = ME
+        )
+        val taskLists = useCase.execute().map(::format).fix()
+        println(taskLists.fold({ t -> t.printStackTrace(); "Error: $t" }, { "Task lists:\n$it" } ))
     }
 }
 
