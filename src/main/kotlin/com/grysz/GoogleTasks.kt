@@ -2,7 +2,9 @@ package com.grysz
 
 import arrow.Kind
 import arrow.core.Either
+import arrow.core.Id
 import arrow.core.extensions.either.monadError.monadError
+import arrow.core.extensions.id.monad.monad
 import arrow.core.fix
 import arrow.data.Kleisli
 import arrow.typeclasses.Monad
@@ -113,18 +115,19 @@ class TaskLists<F>(
         catch(tasks.tasklists().list().setMaxResults(10L)::execute)
 }
 
-fun <F> authentication(ME: MonadError<F, Throwable>): Kleisli<F, Config, GoogleAuthentication<F>> {
-    return Kleisli.ask<F, AuthConfig>(ME)
-        .local(Config::authConfig).map(ME) { authConfig -> GoogleAuthentication(ME, authConfig) }
+fun <F, G> authentication(MK: Monad<G>, ME: MonadError<F, Throwable>): Kleisli<G, Config, GoogleAuthentication<F>> {
+    return Kleisli.ask<G, AuthConfig>(MK)
+        .local(Config::authConfig).map(MK) { authConfig -> GoogleAuthentication(ME, authConfig) }
 }
 
-fun <F> tasksService(M: Monad<F>): Kleisli<F, Config, GoogleTasksService<F>> {
-    return Kleisli.ask<F, String>(M)
-        .local(Config::applicationName).map(M) { appName -> GoogleTasksService(M, appName) }
+fun <F, G> tasksService(MK: Monad<G>, M: Monad<F>): Kleisli<G, Config, GoogleTasksService<F>> {
+    return Kleisli.ask<G, String>(MK)
+        .local(Config::applicationName).map(MK) { appName -> GoogleTasksService(M, appName) }
 }
 
 fun main() {
     val ME = Either.monadError<Throwable>() // or Try.monadError()
+    val ID = Id.monad()
 
     val config = Config(
         AuthConfig(
@@ -134,9 +137,9 @@ fun main() {
         applicationName = "Google Tasks API Java Quickstart"
     )
 
-    val authentication = authentication(ME).run(config)
-    val tasksService = tasksService(ME).run(config)
-    ME.binding {
+    val authentication = authentication(ID, ME).run(config)
+    val tasksService = tasksService(ID, ME).run(config)
+    ID.binding {
         val (dependencies) = authentication.product(tasksService)
         val (authentication, tasksService) = dependencies
         val useCase = TaskLists(
@@ -145,8 +148,10 @@ fun main() {
             tasksService = tasksService,
             ME = ME
         )
-        val taskLists = useCase.execute().map(::format).fix()
-        println(taskLists.fold({ t -> t.printStackTrace(); "Error: $t" }, { "Task lists:\n$it" } ))
+        ME.binding {
+            val taskLists = useCase.execute().map(::format).fix()
+            println(taskLists.fold({ t -> t.printStackTrace(); "Error: $t" }, { "Task lists:\n$it" }))
+        }
     }
 }
 
