@@ -24,5 +24,5 @@ dependencies {
 }
 
 application {
-  mainClassName = "com.grysz.AppKt"
+  mainClassName = "com.grysz.GoogleTasksKt"
 }
